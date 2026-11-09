@@ -1,0 +1,14 @@
+__pycache__/
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.env
+credentials.json
+session.json
+session.pending.json
+.claude/
+.DS_Store
+.langgraph_api/

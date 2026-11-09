@@ -1,0 +1,76 @@
+[project]
+name = "mcp-server-worldquantbrain"
+version = "0.1.0"
+description = "MCP server and LangGraph tools for the WorldQuant BRAIN platform: simulate alphas, inspect results, browse data fields and operators."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Marcell Tukora" }]
+keywords = ["worldquant", "brain", "mcp", "langgraph", "quant", "alpha"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx2>=2.10",
+    "mcp>=2.3,<3",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.10",
+    "starlette>=0.48",
+    "uvicorn>=0.31.1",
+]
+
+[project.optional-dependencies]
+langgraph = ["langchain>=1.4.6", "langchain-core>=1.0", "langgraph>=1.2"]
+
+[project.scripts]
+mcp-server-worldquantbrain = "mcp_server_worldquantbrain.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/tukorama/mcp-server-worldquantbrain"
+Repository = "https://github.com/tukorama/mcp-server-worldquantbrain"
+Issues = "https://github.com/tukorama/mcp-server-worldquantbrain/issues"
+Changelog = "https://github.com/tukorama/mcp-server-worldquantbrain/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "anyio>=4.9",
+    "mcp[cli]>=2.3,<3",
+    "pip-audit>=2.10",
+    "pyright>=1.1.400",
+    "pytest>=8.4",
+    "ruff>=0.12",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: talks to the real BRAIN API (needs WQB_LIVE=1)"]

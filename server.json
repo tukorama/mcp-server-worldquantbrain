@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tukorama/mcp-server-worldquantbrain",
+  "description": "Simulate alphas on WorldQuant BRAIN, inspect results, browse data fields and operators.",
+  "repository": {
+    "url": "https://github.com/tukorama/mcp-server-worldquantbrain",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "mcp-server-worldquantbrain",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "WQB_EMAIL",
+          "description": "BRAIN login email. Not needed after `mcp-server-worldquantbrain auth`.",
+          "isRequired": false
+        },
+        {
+          "name": "WQB_PASSWORD",
+          "description": "BRAIN password. Not needed after `mcp-server-worldquantbrain auth`.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "WQB_CREDENTIALS_FILE",
+          "description": "Path to a JSON file holding [\"email\", \"password\"].",
+          "isRequired": false
+        },
+        {
+          "name": "WQB_ALLOW_SUBMIT",
+          "description": "Set to true to expose the submit_alpha tool.",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
