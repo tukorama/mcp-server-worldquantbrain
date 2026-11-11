@@ -5,7 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-11
+## [0.2.1] - 2026-11-11
+
+The `v0.2.0` tag exists but was never published, because its release workflow did not parse. This
+release contains the changes listed under 0.2.0.
+
+## [0.2.0] - 2026-11-11 [NOT PUBLISHED]
 
 ### Added
 
@@ -28,6 +33,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Saved sessions, biometric login hand-off and a simulation ledger.
 - Built against `mcp` 2.3.
 
-[Unreleased]: https://github.com/tukorama/mcp-server-worldquantbrain/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tukorama/mcp-server-worldquantbrain/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tukorama/mcp-server-worldquantbrain/compare/v0.1.0...v0.2.1
 [0.2.0]: https://github.com/tukorama/mcp-server-worldquantbrain/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tukorama/mcp-server-worldquantbrain/releases/tag/v0.1.0
