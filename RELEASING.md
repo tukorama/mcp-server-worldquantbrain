@@ -11,8 +11,11 @@ Every release:
 
 1. Run the live suite: `WQB_LIVE=1 WQB_LIVE_SIMULATE=1 uv run pytest -m live`.
 2. `uv version --bump patch` (or `minor`, `major`), and set the same version in `server.json`.
-   Skip this for 0.1.0, which is already set.
-3. Date the entry in `CHANGELOG.md` and commit.
+3. Date the entry in `CHANGELOG.md`, commit and push, and wait for CI to pass.
 4. `git tag -a v$(uv version --short) -m v$(uv version --short) && git push --follow-tags`.
-5. After the workflow finishes, publish to the MCP Registry:
-   `mcp-publisher login github && mcp-publisher publish`.
+
+The release workflow uploads to PyPI, then publishes `server.json` to the MCP Registry and creates
+the GitHub release. If only the registry job fails, use "Re-run failed jobs". If the manifest itself
+was wrong, fix it on `main` and publish by hand: `mcp-publisher login github && mcp-publisher publish`.
+The registry and PyPI never accept the same version twice, so a fix to either needs a new version.
+`mcp-publisher` is pinned by version and checksum in both workflows; update the two together.

@@ -1,14 +1,15 @@
 <!-- mcp-name: io.github.tukorama/mcp-server-worldquantbrain -->
 
-# mcp-server-worldquantbrain
+# MCP server and LangGraph tools for WorldQuant BRAIN
 
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-worldquantbrain)](https://pypi.org/project/mcp-server-worldquantbrain/)
 [![CI](https://github.com/tukorama/mcp-server-worldquantbrain/actions/workflows/ci.yml/badge.svg)](https://github.com/tukorama/mcp-server-worldquantbrain/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/tukorama/mcp-server-worldquantbrain/blob/main/LICENSE)
 
-An MCP server and LangGraph toolkit for [WorldQuant BRAIN](https://platform.worldquantbrain.com).
-It lets an agent look up data fields, backtest FASTEXPR alphas and read the results. Unofficial, and
-not affiliated with WorldQuant.
+`mcp-server-worldquantbrain` is a Model Context Protocol (MCP) server for the
+[WorldQuant BRAIN](https://platform.worldquantbrain.com) API, with the same tools packaged for
+LangGraph and LangChain. It lets an agent look up data fields, backtest Fast Expression (FASTEXPR)
+alphas and read the results. Unofficial, and not affiliated with WorldQuant.
 
 ## Why this exists
 
@@ -37,13 +38,13 @@ uvx mcp-server-worldquantbrain auth
 
 Then add the server to your client.
 
-**Claude Code**
+### Claude Code
 
 ```bash
 claude mcp add brain -- uvx mcp-server-worldquantbrain
 ```
 
-**Claude Desktop, Cursor, VS Code and others**
+### Claude Desktop, Cursor, VS Code and others
 
 ```json
 {
@@ -58,7 +59,7 @@ backtest it."
 
 Prefer to pass credentials directly? Add `"env": {"WQB_EMAIL": "...", "WQB_PASSWORD": "..."}`.
 
-## LangGraph
+## LangGraph and LangChain
 
 The `langgraph` extra gives you plain LangChain tools in the same process, with no MCP server to
 run. It also has a prebuilt agent.
@@ -106,7 +107,7 @@ async with MCPAdapter(config) as adapter:
 The subprocess inherits only `HOME`, `PATH` and a few others, so anything else, including `WQB_*`
 variables, has to go in `env`. Over this route a submission confirmation arrives as a LangGraph
 interrupt, so give the agent a checkpointer if you enable submission. A deployable example is in
-[examples/langgraph_app](examples/langgraph_app).
+[examples/langgraph_app](https://github.com/tukorama/mcp-server-worldquantbrain/tree/main/examples/langgraph_app).
 
 `draw_mermaid(agent)` from `mcp_server_worldquantbrain.integrations.langgraph` returns the graph as
 a [Mermaid](https://mermaid.js.org) flowchart, for the prebuilt agent or a graph of your own. Tools
@@ -309,7 +310,7 @@ and email addresses are shortened, in logs and error messages.
   from your own secret store if that is not enough.
 - Check that your use of automation complies with the BRAIN terms that apply to you.
 
-## Alternatives
+## Other WorldQuant BRAIN projects
 
 - [cnhkmcp](https://pypi.org/project/cnhkmcp/) is on PyPI and covers far more of the platform,
   including the forum. It is a large install that bundles Selenium.
@@ -331,8 +332,9 @@ No code in this repository was copied from those projects.
 
 To point a client at a checkout, use `uvx --from /path/to/mcp-server-worldquantbrain mcp-server-worldquantbrain`,
 or `uv add --editable ../mcp-server-worldquantbrain` from your LangGraph project. See
-[CONTRIBUTING.md](CONTRIBUTING.md) and [RELEASING.md](RELEASING.md).
+[CONTRIBUTING.md](https://github.com/tukorama/mcp-server-worldquantbrain/blob/main/CONTRIBUTING.md)
+and [RELEASING.md](https://github.com/tukorama/mcp-server-worldquantbrain/blob/main/RELEASING.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/tukorama/mcp-server-worldquantbrain/blob/main/LICENSE)

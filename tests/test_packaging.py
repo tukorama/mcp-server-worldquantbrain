@@ -1,4 +1,6 @@
 import email
+import json
+import re
 import subprocess
 import zipfile
 from pathlib import Path
@@ -29,3 +31,10 @@ def test_wheel_contents_and_metadata(tmp_path):
     assert not [name for name in names if name.startswith("tests/") or "__pycache__" in name]
     assert metadata["License-Expression"] == "MIT"
     assert "mcp-server-worldquantbrain = mcp_server_worldquantbrain.cli:main" in entry_points
+
+    # The MCP Registry checks PyPI for this line, and a release cannot be edited afterwards.
+    description = metadata.get_payload()
+    manifest = json.loads((ROOT / "server.json").read_text())
+    assert f"mcp-name: {manifest['name']}" in description
+    # PyPI does not rewrite relative links, so they would break on the project page.
+    assert not re.findall(r"\]\((?!https?://|#)", description)
