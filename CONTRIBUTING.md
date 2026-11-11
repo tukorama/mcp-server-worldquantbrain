@@ -15,6 +15,7 @@ uv run mcp dev src/mcp_server_worldquantbrain/server.py
 Adding a tool means adding one decorated function in `src/mcp_server_worldquantbrain/ops/`. The same
 function becomes the MCP tool and the LangChain tool, and its docstring is what the model reads, so
 say what it returns and when to use a sibling instead. Add a test in `tests/mcp/test_tools.py`.
+The graph in the README lists every tool, and a test prints the new one to paste when it is stale.
 
 Tests use scripted responses. `tests/live` hits the real API and only runs with `WQB_LIVE=1`.
 `WQB_LIVE_SIMULATE=1` also spends one simulation. When a live run shows a response shape that

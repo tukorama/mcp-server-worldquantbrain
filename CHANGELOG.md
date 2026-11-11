@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added
+
+- `draw_mermaid` draws a LangGraph agent as a Mermaid flowchart, with the tools grouped by area and
+  by what they can change.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added

@@ -108,6 +108,94 @@ variables, has to go in `env`. Over this route a submission confirmation arrives
 interrupt, so give the agent a checkpointer if you enable submission. A deployable example is in
 [examples/langgraph_app](examples/langgraph_app).
 
+`draw_mermaid(agent)` from `mcp_server_worldquantbrain.integrations.langgraph` returns the graph as
+a [Mermaid](https://mermaid.js.org) flowchart, for the prebuilt agent or a graph of your own. Tools
+are grouped by area and colored by what they can change. This is the prebuilt agent with
+`WQB_ALLOW_SUBMIT=true`:
+
+```mermaid
+---
+config:
+  flowchart:
+    nodeSpacing: 24
+    rankSpacing: 12
+    padding: 8
+---
+flowchart TB
+    subgraph agent["Agent graph"]
+        direction LR
+        n0([start])
+        n1["model"]
+        n2["tools"]
+        n3{{"human approval<br/>before submit_alpha"}}:::approval
+        n4([end])
+        n3 -.-> n4
+        n3 -.->|"rejected"| n1
+        n3 -.->|"approved"| n2
+        n0 --> n1
+        n1 --> n3
+        n2 -.-> n1
+    end
+    subgraph tools["Tools"]
+        direction TB
+        subgraph tools_row0[" "]
+            direction LR
+            subgraph tools_auth["Login"]
+                direction LR
+                tools_auth_read["auth_status"]:::read
+                tools_auth_write["authenticate<br/>complete_authentication"]:::write
+            end
+            subgraph tools_simulations["Simulate"]
+                direction LR
+                tools_simulations_read["get_simulation_status<br/>get_simulation_options"]:::read
+                tools_simulations_write["simulate_alpha<br/>simulate_alphas_batch"]:::write
+            end
+            subgraph tools_submit["Submit"]
+                direction LR
+                tools_submit_irreversible["submit_alpha"]:::irreversible
+            end
+            tools_auth ~~~ tools_simulations ~~~ tools_submit
+        end
+        subgraph tools_row1[" "]
+            direction LR
+            subgraph tools_alphas["Alphas"]
+                direction LR
+                tools_alphas_read["get_alpha<br/>list_alphas<br/>get_alpha_pnl<br/>list_alpha_recordsets<br/>get_alpha_recordset<br/>check_alpha_submission<br/>get_alpha_self_correlation<br/>get_alpha_prod_correlation"]:::read
+                tools_alphas_write["update_alpha"]:::write
+            end
+            subgraph tools_data["Data"]
+                direction LR
+                tools_data_read["list_datasets<br/>get_dataset<br/>list_datafields<br/>get_datafield<br/>list_data_categories<br/>list_operators"]:::read
+            end
+            subgraph tools_users["Account"]
+                direction LR
+                tools_users_read["get_user_profile<br/>get_user_activity<br/>list_messages"]:::read
+            end
+            tools_alphas ~~~ tools_data ~~~ tools_users
+        end
+        tools_row0 ~~~ tools_row1
+    end
+    agent -- tool calls --> tools
+    subgraph legend["Legend"]
+        direction TB
+        legend_read["read-only"]:::read
+        legend_write["changes account state"]:::write
+        legend_irreversible["irreversible"]:::irreversible
+    end
+    brain["BRAIN API"]:::external
+    tools -- HTTPS --> brain
+    tools ~~~ legend
+    classDef default fill:#64748b,fill-opacity:0.06,stroke:#64748b
+    classDef read fill:#64748b,fill-opacity:0.14,stroke:#64748b
+    classDef write fill:#d97706,fill-opacity:0.16,stroke:#d97706
+    classDef irreversible,approval fill:#dc2626,fill-opacity:0.16,stroke:#dc2626,stroke-width:2px
+    classDef external fill-opacity:0,stroke-dasharray:5 4
+    classDef box fill:#64748b,fill-opacity:0.05,stroke:#64748b,stroke-opacity:0.45
+    classDef row fill:none,stroke:none
+    class agent,tools,tools_auth,tools_simulations,tools_submit,tools_alphas,tools_data,tools_users,legend box
+    class tools_row0,tools_row1 row
+```
+
 ## Tools
 
 | Group | Tool | Notes |

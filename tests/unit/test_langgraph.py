@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("langchain")
@@ -5,6 +7,9 @@ pytest.importorskip("langgraph")
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel  # noqa: E402
 from langchain_core.messages import AIMessage  # noqa: E402
+from langchain_core.tools import StructuredTool  # noqa: E402
+from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
+from langgraph.prebuilt import ToolNode  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from mcp import Client  # noqa: E402
 
@@ -14,6 +19,8 @@ from mcp_server_worldquantbrain.server import create_server  # noqa: E402
 from tests.conftest import fixture  # noqa: E402
 
 pytestmark = pytest.mark.anyio
+
+README = Path(__file__).parents[2] / "README.md"
 
 
 def inject(monkeypatch, brain):
@@ -114,3 +121,36 @@ async def test_agent_without_submit_needs_no_checkpointer(settings, brain, monke
     state = await agent.ainvoke({"messages": [("user", "show a")]})
     assert state["messages"][-1].content == "done"
     assert len(brain.calls("GET", "/alphas/a")) == 1
+
+
+def test_readme_graph_is_current(settings):
+    settings.allow_submit = True
+    agent = integration.create_brain_agent(tool_call_model("get_alpha", {}), settings=settings)
+    drawn = integration.draw_mermaid(agent)
+    assert drawn in README.read_text(encoding="utf-8"), f"Paste this graph into README.md:\n{drawn}"
+
+
+def test_graph_without_submit_has_no_approval_step(settings):
+    agent = integration.create_brain_agent(tool_call_model("get_alpha", {}), settings=settings)
+    drawn = integration.draw_mermaid(agent)
+    assert "simulate_alpha" in drawn
+    for absent in ("human approval", "submit_alpha", "legend_irreversible"):
+        assert absent not in drawn
+
+
+def test_graph_draws_a_hand_built_graph_with_foreign_tools(settings):
+    foreign = StructuredTool.from_function(
+        lambda name: name, name="lookup_ticker", description="Look up a ticker."
+    )
+    builder = StateGraph(MessagesState)
+    builder.add_node("end", lambda state: state)
+    builder.add_node("call", ToolNode([*integration.get_brain_tools(settings), foreign]))
+    builder.add_edge(START, "end")
+    builder.add_conditional_edges("end", lambda state: "stop", {"more": "call", "stop": END})
+    builder.add_edge("call", "end")
+    drawn = integration.draw_mermaid(builder.compile())
+    assert 'n1["end"]' in drawn
+    assert 'n1 -.->|"more"| n2' in drawn
+    assert 'tools_other_all["lookup_ticker"]' in drawn
+    assert "update_alpha" in drawn
+    assert "submit_alpha" not in drawn
