@@ -1,0 +1,37 @@
+title = "Gitleaks configuration for mcp-server-worldquantbrain"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "wqb-password-literal"
+description = "Hardcoded WQB_PASSWORD credential"
+regex = '''(?i)\bwqb_password\s*[:=]\s*['"]?([^\s'"\}]{8,})['"]?'''
+secretGroup = 1
+tags = ["secret", "worldquantbrain"]
+
+[[rules]]
+id = "wqb-bearer-token"
+description = "Hardcoded WQB_HTTP_BEARER_TOKEN secret"
+regex = '''(?i)\bwqb_http_bearer_token\s*[:=]\s*['"]?([^\s'"\}]{12,})['"]?'''
+secretGroup = 1
+tags = ["secret", "http"]
+
+[[rules]]
+id = "wqb-session-cookie"
+description = "WorldQuant BRAIN session cookie value"
+regex = '''(?i)\bt=([A-Za-z0-9._-]{24,})'''
+secretGroup = 1
+tags = ["secret", "session"]
+
+[allowlist]
+description = "Synthetic placeholder strings in tests and documentation"
+regexes = [
+    '''replace-with-[A-Za-z0-9_-]+''',
+    '''your-[A-Za-z0-9_-]+''',
+    '''sesame''',
+    '''hunter2[A-Za-z0-9_-]*''',
+]
+paths = [
+    '''^\.gitleaks\.toml$''',
+]

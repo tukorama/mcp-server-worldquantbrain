@@ -1,0 +1,1 @@
+{"is":{"checks":[{"name":"LOW_SHARPE","result":"FAIL","limit":1.25,"value":0.15},{"name":"LOW_TURNOVER","result":"PASS","limit":0.01,"value":0.01},{"name":"REVERSION_COMPONENT","result":"WARNING","message":"Alpha expression includes a reversion component"}]}}
