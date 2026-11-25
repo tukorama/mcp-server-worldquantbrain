@@ -33,7 +33,7 @@ Tracing `simulate_alpha` or `submit_alpha` end to end:
 
 ## 3. Session Sharing & Optional Extras
 
-- **Multi-process sessions:** `SessionStore` writes session cookies atomically via temporary file + `0o600` permissions + `os.replace`. If the CLI `auth` command refreshes a cookie on disk, a running MCP server detects the new `mtime` before forcing a new login.
+- **Multi-process sessions:** `SessionStore` writes session cookies atomically via temporary file + `0o600` permissions + `os.replace`. If the CLI `auth` command refreshes a cookie on disk, a running MCP server detects the new `mtime` before forcing a new login. After three rejected passwords in a row the server stops logging in until such a session appears.
 - **Lightweight default install:** `pyproject.toml` puts `langchain`, `langchain-core`, and `langgraph` in `[project.optional-dependencies]`, verified by the `base-install` CI job so headless MCP deployments stay small and fast.
 
 Next: [03 — State, Quota, and Safety](03-state-quota-and-safety.md)

@@ -5,6 +5,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed
+
+- A rejected password is retried after one minute, then two, and after three rejections in a row
+  the server stops logging in and asks for `mcp-server-worldquantbrain auth`, instead of retrying
+  every minute and risking a locked account.
+- A redirect, an empty answer or a non-JSON page from a JSON endpoint is an error. `get_datafield`
+  and `get_dataset` no longer answer one with a bare id, and a redirect on `POST /simulations` is
+  no longer taken for a simulation id.
+
 ## [0.2.2] - 2026-11-19
 
 ### Added

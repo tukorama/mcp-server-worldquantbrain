@@ -4,7 +4,7 @@ import pytest
 
 from mcp_server_worldquantbrain.client.base import BrainClient
 from mcp_server_worldquantbrain.client.simulations import simulation_terminal
-from mcp_server_worldquantbrain.errors import PollTimeout
+from mcp_server_worldquantbrain.errors import PollTimeout, RateLimited, ServerError
 from tests.conftest import fixture
 
 pytestmark = pytest.mark.anyio
@@ -128,3 +128,28 @@ async def test_simulation_terminal_accepts_warning_and_error(settings: Any, brai
     brain.add("GET", "/job", (200, body))
     response = await run(settings, brain, max_seconds=60, terminal=simulation_terminal)
     assert response.json()["status"] == "ERROR"
+
+
+async def test_timeout_keeps_the_failure_that_hid_the_answer(settings: Any, brain: Any) -> None:
+    brain.add("GET", "/job", (500, None))
+    with pytest.raises(PollTimeout) as caught:
+        await run(settings, brain, max_seconds=30)
+    assert isinstance(caught.value.last_error, ServerError)
+    assert "returned 500" in caught.value.last_error.message
+
+
+async def test_single_check_keeps_the_failure_that_hid_the_answer(
+    settings: Any, brain: Any
+) -> None:
+    brain.add("GET", "/job", (429, None, {"retry-after": "10"}))
+    with pytest.raises(PollTimeout) as caught:
+        await run(settings, brain, max_seconds=0)
+    assert isinstance(caught.value.last_error, RateLimited)
+
+
+async def test_an_answer_after_an_outage_clears_the_failure(settings: Any, brain: Any) -> None:
+    pending = (200, {"status": "SIMULATING"}, {"retry-after": "5"})
+    brain.add("GET", "/job", (500, None), (500, None), (500, None), pending)
+    with pytest.raises(PollTimeout) as caught:
+        await run(settings, brain, max_seconds=60)
+    assert caught.value.last_error is None

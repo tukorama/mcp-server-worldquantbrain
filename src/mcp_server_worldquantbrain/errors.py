@@ -70,11 +70,21 @@ class NotFound(BrainError):
 
 
 class PollTimeout(BrainError):
-    def __init__(self, location: str, *, elapsed: float, last_body: Any = None) -> None:
+    """`last_error` is the transient failure that kept the last checks from an answer, if any."""
+
+    def __init__(
+        self,
+        location: str,
+        *,
+        elapsed: float,
+        last_body: Any = None,
+        last_error: BrainError | None = None,
+    ) -> None:
         super().__init__(f"{location} was still in progress after {int(elapsed)} seconds.")
         self.location = location
         self.elapsed = elapsed
         self.last_body = last_body
+        self.last_error = last_error
 
 
 class ServerError(BrainError):

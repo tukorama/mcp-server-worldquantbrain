@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -42,6 +43,9 @@ EXPIRY_MARGIN = 120.0
 UNKNOWN_EXPIRY_RECHECK = 300.0
 PROBE_CACHE_SECONDS = 60.0
 LOGIN_FAILURE_COOLDOWN = 60.0
+LOGIN_FAILURE_MAX_COOLDOWN = 900.0
+# Sending a rejected password again cannot help and can get the account locked.
+MAX_REJECTED_LOGINS = 3
 POLL_GRACE_SECONDS = 5.0
 # A smaller remainder is clock rounding, not time worth another request.
 POLL_MIN_WAIT = 0.001
@@ -97,6 +101,7 @@ class BrainClient:
         self._expires_at: float | None = None
         self._probe: tuple[float, AuthStatus] | None = None
         self._login_failure: tuple[float, BrainError] | None = None
+        self._rejected_logins = 0
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -327,6 +332,9 @@ class BrainClient:
         if not body or not (body.get("user") or body.get("token")):
             return False
         self._adopt_token(body, persist=False)
+        # A working session, such as one `mcp-server-worldquantbrain auth` saved, ends a stop.
+        self._login_failure = None
+        self._rejected_logins = 0
         return True
 
     def _adopt_token(self, body: dict[str, Any], *, persist: bool) -> None:
@@ -352,6 +360,7 @@ class BrainClient:
     def _mark_logged_in(self) -> None:
         self._generation += 1
         self._login_failure = None
+        self._rejected_logins = 0
         self._probe = None
 
     def _persist(self) -> None:
@@ -387,13 +396,7 @@ class BrainClient:
                 url = self._own_host_url(urljoin(str(response.url), location))
                 self.store.save_pending(url, self._dump_cookies())
                 raise BiometricRequired(url)
-            error = AuthError(
-                "BRAIN rejected the email or password.",
-                status=401,
-                hint="Check the configured credentials, then call authenticate.",
-            )
-            self._login_failure = (_monotonic() + LOGIN_FAILURE_COOLDOWN, error)
-            raise error
+            raise self._rejected_login()
         if response.status_code == 429:
             retry_after = parse_retry_after(response)
             throttled = RateLimited("BRAIN is rate limiting logins.", retry_after=retry_after)
@@ -418,6 +421,32 @@ class BrainClient:
         self._adopt_login(body_dict)
         logger.info("Logged in to BRAIN")
 
+    def _rejected_login(self) -> AuthError:
+        """Wait longer after each rejected password, and stop before BRAIN locks the account."""
+        self._rejected_logins += 1
+        if self._rejected_logins >= MAX_REJECTED_LOGINS:
+            stopped = AuthError(
+                f"BRAIN rejected the email or password {self._rejected_logins} times in a row, so "
+                + "this server stopped logging in to keep the account from being locked.",
+                status=401,
+                hint=(
+                    "Fix WQB_PASSWORD or "
+                    + f"{self.settings.resolved_credentials_file} if the password changed, then "
+                    + "run `mcp-server-worldquantbrain auth` in a terminal. This server then uses "
+                    + "the new session."
+                ),
+            )
+            self._login_failure = (math.inf, stopped)
+            return stopped
+        error = AuthError(
+            "BRAIN rejected the email or password.",
+            status=401,
+            hint="Check the configured credentials, then call authenticate.",
+        )
+        cooldown = LOGIN_FAILURE_COOLDOWN * 2 ** (self._rejected_logins - 1)
+        self._login_failure = (_monotonic() + min(cooldown, LOGIN_FAILURE_MAX_COOLDOWN), error)
+        return error
+
     async def _ensure_session(self) -> None:
         if _monotonic() < self._valid_until:
             return
@@ -441,11 +470,24 @@ class BrainClient:
     # Requests
 
     @staticmethod
-    async def _pause_before_retry(url: str, deadline: float | None, seconds: float) -> None:
+    async def _pause_before_retry(
+        url: str, deadline: float | None, seconds: float, cause: BrainError
+    ) -> None:
         # A retry must not outlive the caller's wait, or the client cancels the whole call.
         if deadline is not None and _monotonic() + seconds > deadline:
-            raise PollTimeout(url, elapsed=0.0)
+            raise PollTimeout(url, elapsed=0.0, last_error=cause)
         await _sleep(seconds)
+
+    @staticmethod
+    def _network_error(
+        method: str, url: str, exc: httpx2.TransportError | httpx2.DecodingError
+    ) -> ServerError:
+        return ServerError(
+            f"{method} {url} failed: {type(exc).__name__}.",
+            hint="Check the outcome before repeating this write."
+            if method == "POST"
+            else "Retry later.",
+        )
 
     @staticmethod
     def _network_retry_delay(
@@ -459,13 +501,20 @@ class BrainClient:
         if failures >= policy.network_attempts or (
             reached_server and not policy.retry_ambiguous_timeouts
         ):
-            raise ServerError(
-                f"{method} {url} failed: {type(exc).__name__}.",
-                hint="Check the outcome before repeating this write."
-                if method == "POST"
-                else "Retry later.",
-            ) from exc
+            raise BrainClient._network_error(method, url, exc) from exc
         return backoff(failures)
+
+    @staticmethod
+    def _status_error(method: str, url: str, response: httpx2.Response) -> BrainError:
+        status = response.status_code
+        if status == 429:
+            return RateLimited(
+                f"BRAIN is throttling {method} {url}.",
+                retry_after=parse_retry_after(response),
+                status=429,
+                detail=parse_json(response),
+            )
+        return ServerError(f"{method} {url} returned {status}.", status=status)
 
     @staticmethod
     def _status_retry_delay(
@@ -481,15 +530,10 @@ class BrainClient:
         retry_after = parse_retry_after(response)
         if status == 429:
             if rate_limited >= policy.rate_limit_attempts:
-                raise RateLimited(
-                    f"BRAIN is throttling {method} {url}.",
-                    retry_after=retry_after,
-                    status=429,
-                    detail=parse_json(response),
-                )
+                raise BrainClient._status_error(method, url, response)
             return clamp(retry_after, 1, 120) if retry_after else backoff(rate_limited)
         if server_failures >= policy.server_attempts:
-            raise ServerError(f"{method} {url} returned {status}.", status=status)
+            raise BrainClient._status_error(method, url, response)
         return clamp(retry_after, 0.5, 30) if retry_after else backoff(server_failures)
 
     async def request(
@@ -520,7 +564,8 @@ class BrainClient:
             except (httpx2.TransportError, httpx2.DecodingError) as exc:
                 network_failures += 1
                 delay = self._network_retry_delay(method, url, exc, policy, network_failures)
-                await self._pause_before_retry(url, deadline, delay)
+                cause = self._network_error(method, url, exc)
+                await self._pause_before_retry(url, deadline, delay, cause)
                 continue
 
             status = response.status_code
@@ -542,7 +587,8 @@ class BrainClient:
                     rate_limited=rate_limited,
                     server_failures=server_failures,
                 )
-                await self._pause_before_retry(url, deadline, delay)
+                cause = self._status_error(method, url, response)
+                await self._pause_before_retry(url, deadline, delay, cause)
                 continue
             if not long_polling:
                 self._raise_for_status(method, url, response)
@@ -590,7 +636,19 @@ class BrainClient:
         return _monotonic() + seconds
 
     async def request_json(self, method: str, url: str, **kwargs: Any) -> Any:
-        return parse_json(await self.request(method, url, **kwargs))
+        """Send a request whose answer must be JSON. 204 No Content returns None."""
+        response = await self.request(method, url, **kwargs)
+        if response.status_code == 204:
+            return None
+        body = parse_json(response)
+        # Redirects are not followed, and a gateway or maintenance page is not data.
+        if not response.is_success or body is None:
+            raise ServerError(
+                f"{method} {url} returned {response.status_code} without a JSON body.",
+                status=response.status_code,
+                hint="BRAIN may be redirecting or down for maintenance. Retry later.",
+            )
+        return body
 
     async def poll(
         self,
@@ -602,31 +660,44 @@ class BrainClient:
         max_interval: float | None = None,
         on_poll: OnPoll | None = None,
     ) -> httpx2.Response:
-        """GET `url` until `terminal` accepts a response or `max_seconds` runs out."""
+        """GET `url` until `terminal` accepts a response or `max_seconds` runs out.
+
+        The PollTimeout keeps the failure that stopped the last checks from getting an answer.
+        """
         ceiling = max_interval if max_interval is not None else self.settings.poll_max_interval
         started = _monotonic()
         deadline = started + max_seconds
         delay = min_interval
         last_body: Any = None
+        last_error: BrainError | None = None
         while True:
             try:
                 # Re-login sleeps and a slow GET must not outlive the wait either.
                 async with asyncio.timeout(max(deadline - _monotonic(), 0) + POLL_GRACE_SECONDS):
                     response = await self.request("GET", url, long_poll=True, deadline=deadline)
-            except (TimeoutError, PollTimeout):
+            except PollTimeout as exc:
                 raise PollTimeout(
-                    url, elapsed=_monotonic() - started, last_body=last_body
+                    url,
+                    elapsed=_monotonic() - started,
+                    last_body=last_body,
+                    last_error=exc.last_error or last_error,
                 ) from None
-            except (ServerError, RateLimited):
+            except TimeoutError:
+                raise PollTimeout(
+                    url, elapsed=_monotonic() - started, last_body=last_body, last_error=last_error
+                ) from None
+            except (ServerError, RateLimited) as exc:
                 # The job is still running on BRAIN. A brief outage must not lose track of it.
+                last_error = exc
                 remaining = deadline - _monotonic()
                 if remaining <= POLL_MIN_WAIT:
                     raise PollTimeout(
-                        url, elapsed=_monotonic() - started, last_body=last_body
+                        url, elapsed=_monotonic() - started, last_body=last_body, last_error=exc
                     ) from None
                 await _sleep(min(delay, remaining))
                 delay = min(delay * 1.5, ceiling)
                 continue
+            last_error = None
             if terminal(response):
                 return response
             last_body = parse_json(response)

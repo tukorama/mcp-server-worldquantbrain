@@ -151,3 +151,23 @@ async def test_second_401_after_relogin_is_an_auth_error(settings: Any, brain: A
         with pytest.raises(AuthError):
             await client.request_json("GET", "/x")
     assert len(brain.calls("POST", "/authentication")) == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [(302, None), (200, b""), (200, b"<html>maintenance</html>"), (200, b"null")],
+)
+async def test_json_endpoint_refuses_a_redirect_or_a_body_that_is_not_json(
+    settings: Any, brain: Any, status: Any, body: Any
+) -> None:
+    brain.add("GET", "/x", (status, body, {"location": "https://elsewhere.example/x"}))
+    async with client_for(settings, brain) as client:
+        with pytest.raises(ServerError, match="without a JSON body"):
+            await client.request_json("GET", "/x")
+    assert len(brain.calls("GET", "/x")) == 1
+
+
+async def test_no_content_is_an_empty_answer(settings: Any, brain: Any) -> None:
+    brain.add("PATCH", "/x", (204, None))
+    async with client_for(settings, brain) as client:
+        assert await client.request_json("PATCH", "/x") is None

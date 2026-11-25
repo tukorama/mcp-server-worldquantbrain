@@ -284,6 +284,25 @@ async def test_get_datafield(session: Any, brain: Any) -> None:
     assert (await call(session, "get_datafield", field_id="close"))["type"] == "MATRIX"
 
 
+@pytest.mark.parametrize(
+    ("tool", "path", "argument"),
+    [
+        ("get_datafield", "/data-fields/nosuch", "field_id"),
+        ("get_dataset", "/data-sets/nosuch", "dataset_id"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("status", "body"), [(302, None), (200, ""), (200, "<html>maintenance</html>"), (200, {})]
+)
+async def test_an_answer_without_the_item_is_an_error_not_a_bare_id(
+    session: Any, brain: Any, tool: str, path: str, argument: str, status: int, body: Any
+) -> None:
+    brain.add("GET", path, (status, body, {"location": "/elsewhere"}))
+    result = await session.call_tool(tool, {argument: "nosuch"})
+    assert result.is_error
+    assert "does not exist" not in result.content[0].text
+
+
 async def test_list_data_categories(session: Any, brain: Any) -> None:
     brain.add("GET", "/data-categories", [{"id": "pv", "name": "PV", "children": [{"id": "c"}]}])
     assert (await call(session, "list_data_categories"))["items"][0]["children"][0]["id"] == "c"
