@@ -40,6 +40,13 @@ async def start_simulation(
     client: BrainClient, payload: dict[str, Any] | list[dict[str, Any]]
 ) -> tuple[str, Quota | None]:
     response = await client.request("POST", "/simulations", json_body=payload)
+    if not response.is_success:
+        # A redirect's Location points somewhere else, not at a new simulation.
+        raise ServerError(
+            f"POST /simulations returned {response.status_code} instead of starting a simulation.",
+            status=response.status_code,
+            hint="Check the outcome before repeating this write.",
+        )
     location = response.headers.get("location")
     if not location:
         raise ServerError(f"POST /simulations returned {response.status_code} without a Location.")

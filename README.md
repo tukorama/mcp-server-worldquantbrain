@@ -333,7 +333,10 @@ counted, and can hit BRAIN's own limit, which comes back as a rate-limit error w
 wait.
 
 **The ledger.** Whitespace in an expression does not matter; every setting does. Pass `force=True`
-to run an identical simulation again. Failed simulations can be run again.
+to run an identical simulation again. Failed simulations can be run again. Server processes that
+share the cache directory share the ledger, so they do not start the same simulation twice either.
+If the ledger file cannot be used, simulations are refused rather than run unchecked; `force=True`
+or `WQB_LEDGER=false` runs them anyway.
 
 **Writes are not retried.** A POST that may have reached BRAIN is never repeated automatically, so a
 network failure cannot spend quota twice or submit twice. Reads retry with backoff and honour
@@ -342,6 +345,10 @@ network failure cannot spend quota twice or submit twice. Reads retry with backo
 **Biometric login.** `authenticate` returns a URL, the user finishes the check in a browser, and
 `complete_authentication` ends the login. The pending check is saved for 30 minutes, so it survives
 a restart. On a terminal, `mcp-server-worldquantbrain auth` does the same with a prompt.
+
+**Rejected passwords.** After BRAIN rejects the password, the server waits a minute before trying
+again, then two. After three rejections in a row it stops, so it cannot lock the account, until
+`mcp-server-worldquantbrain auth` saves a working session.
 
 **What is cached.** Operators and simulation options for a week, categories and dataset pages for a
 day. Alphas, simulations, checks, correlations and data fields are always fetched fresh.

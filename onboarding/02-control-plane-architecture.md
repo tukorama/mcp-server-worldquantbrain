@@ -25,7 +25,7 @@ Tracing `simulate_alpha` or `submit_alpha` end to end:
 
 1. **Surface ([tools.py](../src/mcp_server_worldquantbrain/tools.py)):** inspects the op signature, injects `Call(runtime=..., client_wait_cap=...)`, and runs pre-call confirmation if `op.requires_submit_flag` and `WQB_SUBMIT_CONFIRM=elicit`.
 2. **Operations ([ops/simulations.py](../src/mcp_server_worldquantbrain/ops/simulations.py)):** validates arguments via Pydantic `Field` bounds (`delay`, `decay`, `truncation`), constructs the canonical payload with `simulation_payload()`, and delegates to `SimulationManager.simulate()`.
-3. **Orchestration ([sim_manager.py](../src/mcp_server_worldquantbrain/sim_manager.py)):** acquires the normalized expression lock, checks `Ledger.get()`, acquires a slot from the concurrency `Semaphore`, shields `_start()` from task cancellation so accepted `POST /simulations` IDs are always saved, and polls until completion or client deadline.
+3. **Orchestration ([sim_manager.py](../src/mcp_server_worldquantbrain/sim_manager.py)):** acquires the normalized expression lock and a ledger reservation that other server processes respect, checks the ledger row read with it, acquires a slot from the concurrency `Semaphore`, shields `_start()` from task cancellation so accepted `POST /simulations` IDs are always saved, and polls until completion or client deadline.
 4. **Protocol Client ([client/base.py](../src/mcp_server_worldquantbrain/client/base.py)):** injects saved session cookies, adopts refreshed sessions from disk across processes via file `mtime`, refreshes expired `401` sessions once, respects `Retry-After`, and leaves `POST` retries off on ambiguous server/network failures.
 5. **Redaction ([redaction.py](../src/mcp_server_worldquantbrain/redaction.py)):** any `BrainError` or unexpected exception passes through `scrub()` so passwords, basic/bearer headers, cookies, JWTs, and emails never reach agent logs or tool errors.
 
@@ -33,7 +33,7 @@ Tracing `simulate_alpha` or `submit_alpha` end to end:
 
 ## 3. Session Sharing & Optional Extras
 
-- **Multi-process sessions:** `SessionStore` writes session cookies atomically via temporary file + `0o600` permissions + `os.replace`. If the CLI `auth` command refreshes a cookie on disk, a running MCP server detects the new `mtime` before forcing a new login.
+- **Multi-process sessions:** `SessionStore` writes session cookies atomically via temporary file + `0o600` permissions + `os.replace`. If the CLI `auth` command refreshes a cookie on disk, a running MCP server detects the new `mtime` before forcing a new login. After three rejected passwords in a row the server stops logging in until such a session appears.
 - **Lightweight default install:** `pyproject.toml` puts `langchain`, `langchain-core`, and `langgraph` in `[project.optional-dependencies]`, verified by the `base-install` CI job so headless MCP deployments stay small and fast.
 
 Next: [03 — State, Quota, and Safety](03-state-quota-and-safety.md)

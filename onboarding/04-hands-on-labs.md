@@ -43,7 +43,7 @@ This exercises:
 - Whitespace-invariant FASTEXPR fingerprinting across randomized whitespace and key orderings.
 - Path-segment URL escaping (`segment()`) and pagination boundary guarantees (`MAX_OFFSET = 10_000`).
 - Secret, email, base64, and HTML redaction invariants.
-- `LedgerStateMachine` stateful sequences verifying invalid-status rejection, non-erasing `alpha_id`, and POSIX `0o600` database file permissions.
+- `LedgerStateMachine` stateful sequences verifying that statuses outside the alphabet are mapped onto it, non-erasing `alpha_id`, and POSIX `0o600` database file permissions.
 
 ---
 

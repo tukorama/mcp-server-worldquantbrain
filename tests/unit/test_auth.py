@@ -418,3 +418,59 @@ async def test_credentials_are_never_sent_to_a_foreign_inquiry_host(
             await client.authenticate()
         assert client.store.load_pending() is None
     assert not any(r.url.host == "evil.test" for r in brain.requests)
+
+
+async def test_rejected_password_backs_off_then_stops_for_good(
+    settings: Any, brain: Any, clock: Any
+) -> None:
+    brain.add("POST", "/authentication", (401, {"detail": "Invalid credentials"}))
+    async with BrainClient(settings, transport=brain.transport) as client:
+
+        async def attempt() -> AuthError:
+            with pytest.raises(AuthError) as caught:
+                await client.request_json("GET", "/x")
+            return caught.value
+
+        def logins() -> int:
+            return len(brain.calls("POST", "/authentication"))
+
+        await attempt()
+        clock.now += 61
+        await attempt()
+        assert logins() == 2
+        clock.now += 61
+        await attempt()
+        assert logins() == 2
+        clock.now += 60
+        await attempt()
+        assert logins() == 3
+        clock.now += 24 * 3600
+        stopped = await attempt()
+    assert logins() == 3
+    assert "mcp-server-worldquantbrain auth" in stopped.for_agent()
+
+
+async def test_session_saved_by_the_cli_ends_a_login_stop(
+    settings: Any, brain: Any, clock: Any
+) -> None:
+    async with BrainClient(settings, transport=brain.transport) as client:
+        await client.authenticate()
+    brain.add("POST", "/authentication", (401, None))
+    brain.add("GET", "/authentication", (401, None))
+    brain.add("GET", "/x", {"ok": 1})
+    async with BrainClient(settings, transport=brain.transport) as client:
+        for _ in range(4):
+            with pytest.raises(AuthError):
+                await client.request_json("GET", "/x")
+            clock.now += 3600
+        saved = json.loads(settings.resolved_session_file.read_text())
+        saved["cookies"][0]["value"] = "jwt-from-cli"
+        settings.resolved_session_file.write_text(json.dumps(saved))
+        os.utime(settings.resolved_session_file, (1, 1))
+        brain.add("GET", "/authentication", (200, LOGIN_BODY))
+        assert await client.request_json("GET", "/x") == {"ok": 1}
+        brain.add("GET", "/authentication", (401, None))
+        brain.add("POST", "/authentication", (201, LOGIN_BODY, {"set-cookie": "t=jwt-2; Path=/"}))
+        clock.now += 20000
+        assert await client.request_json("GET", "/x") == {"ok": 1}
+    assert len(brain.calls("POST", "/authentication")) == 5

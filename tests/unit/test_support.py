@@ -156,6 +156,21 @@ def test_disabled_ledger_is_inert(tmp_path: Any, settings: Any) -> None:
     assert ledger.get(fingerprint(payload)) is None
 
 
+def test_reservations_are_shared_by_every_ledger_on_the_file(tmp_path: Any, settings: Any) -> None:
+    here, there = Ledger(tmp_path / "l.sqlite3"), Ledger(tmp_path / "l.sqlite3")
+    payload = simulation_payload(settings, "close")
+    key = fingerprint(payload)
+    assert here.claim([key], "here", 60) == {}
+    assert there.claim([key], "there", 60) is None
+    here.record(payload, "sim1", "WAITING")
+    here.release([key], "here")
+    entries = there.claim([key], "there", 60)
+    assert entries is not None
+    assert entries[key].simulation_id == "sim1"
+    there.renew([key], "there", -1)
+    assert here.claim([key], "here", 60) is not None
+
+
 def test_cache_expires(tmp_path: Any, monkeypatch: Any) -> None:
     cache = JsonCache(tmp_path)
     cache.set("k", {"a": 1})

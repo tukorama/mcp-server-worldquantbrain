@@ -210,6 +210,16 @@ async def test_update_alpha_nests_the_description(session: Any, brain: Any) -> N
     }
 
 
+async def test_update_alpha_with_an_empty_answer_reads_the_alpha_back(
+    session: Any, brain: Any
+) -> None:
+    brain.add("PATCH", "/alphas/a", (200, ""))
+    brain.add("GET", "/alphas/a", ALPHA)
+    data = await call(session, "update_alpha", alpha_id="a", name="n")
+    assert data["id"] == ALPHA["id"]
+    assert len(brain.calls("GET", "/alphas/a")) == 1
+
+
 async def test_update_alpha_requires_a_change(session: Any) -> None:
     result = await session.call_tool("update_alpha", {"alpha_id": "a"})
     assert result.is_error
@@ -282,6 +292,25 @@ async def test_list_datafields_trims_descriptions_and_passes_dataset(
 async def test_get_datafield(session: Any, brain: Any) -> None:
     brain.add("GET", "/data-fields/close", {"id": "close", "type": "MATRIX"})
     assert (await call(session, "get_datafield", field_id="close"))["type"] == "MATRIX"
+
+
+@pytest.mark.parametrize(
+    ("tool", "path", "argument"),
+    [
+        ("get_datafield", "/data-fields/nosuch", "field_id"),
+        ("get_dataset", "/data-sets/nosuch", "dataset_id"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("status", "body"), [(302, None), (200, ""), (200, "<html>maintenance</html>"), (200, {})]
+)
+async def test_an_answer_without_the_item_is_an_error_not_a_bare_id(
+    session: Any, brain: Any, tool: str, path: str, argument: str, status: int, body: Any
+) -> None:
+    brain.add("GET", path, (status, body, {"location": "/elsewhere"}))
+    result = await session.call_tool(tool, {argument: "nosuch"})
+    assert result.is_error
+    assert "does not exist" not in result.content[0].text
 
 
 async def test_list_data_categories(session: Any, brain: Any) -> None:

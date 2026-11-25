@@ -4,6 +4,7 @@ from typing import Any
 from mcp_server_worldquantbrain.client.base import BrainClient
 from mcp_server_worldquantbrain.client.cache import DAY, WEEK, JsonCache
 from mcp_server_worldquantbrain.client.paging import page_info, segment
+from mcp_server_worldquantbrain.errors import ServerError
 from mcp_server_worldquantbrain.models.base import as_dict, dict_items, require_dict
 from mcp_server_worldquantbrain.models.data import (
     DataCategory,
@@ -46,9 +47,16 @@ async def list_datasets(
     )
 
 
+async def _one(client: BrainClient, url: str) -> dict[str, Any]:
+    # An answer that is not an object says nothing about whether the item exists.
+    body = as_dict(await client.request_json("GET", url))
+    if not body:
+        raise ServerError(f"GET {url} returned no object.", hint="Retry later.")
+    return body
+
+
 async def get_dataset(client: BrainClient, dataset_id: str) -> Dataset:
-    body = as_dict(await client.request_json("GET", f"/data-sets/{segment(dataset_id)}"))
-    return Dataset.from_api(body or {"id": dataset_id}, full=True)
+    return Dataset.from_api(await _one(client, f"/data-sets/{segment(dataset_id)}"), full=True)
 
 
 async def list_datafields(client: BrainClient, params: dict[str, Any]) -> DataFieldPage:
@@ -66,8 +74,7 @@ async def list_datafields(client: BrainClient, params: dict[str, Any]) -> DataFi
 
 
 async def get_datafield(client: BrainClient, field_id: str) -> DataField:
-    body = as_dict(await client.request_json("GET", f"/data-fields/{segment(field_id)}"))
-    return DataField.from_api(body or {"id": field_id}, full=True)
+    return DataField.from_api(await _one(client, f"/data-fields/{segment(field_id)}"), full=True)
 
 
 async def list_categories(client: BrainClient, cache: JsonCache) -> DataCategoryList:
