@@ -51,6 +51,7 @@ POLL_GRACE_SECONDS = 5.0
 POLL_MIN_WAIT = 0.001
 _CONCURRENCY_ERROR = re.compile(r"concurrent|limit.?exceeded")
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+_WRITE_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 
 Params = Mapping[str, Any] | Sequence[tuple[str, Any]] | None
 Terminal = Callable[[httpx2.Response], bool]
@@ -636,13 +637,15 @@ class BrainClient:
         return _monotonic() + seconds
 
     async def request_json(self, method: str, url: str, **kwargs: Any) -> Any:
-        """Send a request whose answer must be JSON. 204 No Content returns None."""
+        """Send a request whose answer is JSON.
+
+        Anything but 2xx is an error, since redirects are not followed. A read must answer with
+        JSON, as a gateway or maintenance page is not data. A write that succeeded may answer
+        with no body or a non-JSON one, and then returns None.
+        """
         response = await self.request(method, url, **kwargs)
-        if response.status_code == 204:
-            return None
         body = parse_json(response)
-        # Redirects are not followed, and a gateway or maintenance page is not data.
-        if not response.is_success or body is None:
+        if not response.is_success or (body is None and method.upper() not in _WRITE_METHODS):
             raise ServerError(
                 f"{method} {url} returned {response.status_code} without a JSON body.",
                 status=response.status_code,

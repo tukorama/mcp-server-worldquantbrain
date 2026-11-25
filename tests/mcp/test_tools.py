@@ -210,6 +210,16 @@ async def test_update_alpha_nests_the_description(session: Any, brain: Any) -> N
     }
 
 
+async def test_update_alpha_with_an_empty_answer_reads_the_alpha_back(
+    session: Any, brain: Any
+) -> None:
+    brain.add("PATCH", "/alphas/a", (200, ""))
+    brain.add("GET", "/alphas/a", ALPHA)
+    data = await call(session, "update_alpha", alpha_id="a", name="n")
+    assert data["id"] == ALPHA["id"]
+    assert len(brain.calls("GET", "/alphas/a")) == 1
+
+
 async def test_update_alpha_requires_a_change(session: Any) -> None:
     result = await session.call_tool("update_alpha", {"alpha_id": "a"})
     assert result.is_error

@@ -49,15 +49,23 @@ VALID_LEDGER_STATUSES: frozenset[str] = frozenset(
 )
 
 
+# Other spellings of states the alphabet has. BRAIN writes CANCELED with one L.
+_STATUS_SPELLINGS: dict[str, LedgerStatus] = {
+    "FAIL": "FAILED",
+    "CANCELED": "CANCELLED",
+    "COMPLETED": "COMPLETE",
+}
+
+
 def ledger_status(status: str) -> LedgerStatus:
     """Map a status BRAIN reported onto the closed simulation state alphabet.
 
-    BRAIN also reports final states outside it, such as FAIL. Polling only stops on a final state,
-    so any other value is filed as a failure: final, and free to run again.
+    A known spelling such as FAIL maps onto its state. Polling only stops on a final state, so any
+    other value is filed as a failure: final, and free to run again.
     """
     if status in VALID_LEDGER_STATUSES:
         return cast("LedgerStatus", status)
-    return "FAILED"
+    return _STATUS_SPELLINGS.get(status, "FAILED")
 
 
 _SCHEMA = """

@@ -16,6 +16,7 @@ from mcp_server_worldquantbrain.client.ledger import (
     Ledger,
     LedgerEntry,
     fingerprint,
+    ledger_status,
     normalize_expression,
 )
 from mcp_server_worldquantbrain.client.paging import segment
@@ -388,7 +389,7 @@ class SimulationManager:
             alpha_id=alpha_id,
             message=body.get("message"),
         )
-        if alpha_id and status in SUCCESS:
+        if alpha_id and ledger_status(status) in SUCCESS:
             try:
                 result.alpha = await alphas.get_alpha(
                     self.client, alpha_id, max_seconds=min(budget, ALPHA_WAIT_SECONDS)
@@ -519,7 +520,7 @@ class SimulationManager:
             ids = list(dict.fromkeys([*batch.batch_ids, *running]))
             batch.status = "PENDING"
             batch.next_step = f"Call get_simulation_status for each of: {', '.join(ids)}."
-        elif batch.results and not any(r.status in SUCCESS for r in batch.results):
+        elif batch.results and not any(ledger_status(r.status) in SUCCESS for r in batch.results):
             batch.status = "FAILED"
 
     def _collect_fresh_chunk(

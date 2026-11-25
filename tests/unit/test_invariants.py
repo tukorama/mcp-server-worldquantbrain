@@ -22,6 +22,7 @@ from mcp_server_worldquantbrain.redaction import html_to_text, register_secret, 
 
 _WHITESPACE = st.text(alphabet=" \t\r\n", min_size=0, max_size=4)
 _STATUSES: tuple[str, ...] = tuple(sorted(VALID_LEDGER_STATUSES))
+_SPELLINGS = {"FAIL": "FAILED", "CANCELED": "CANCELLED", "COMPLETED": "COMPLETE"}
 _EXPRESSIONS: tuple[str, ...] = ("rank(close)", "ts_mean(returns, 20)", "-volume / adv20")
 _SCRIPT_CONTROL = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]")
 
@@ -188,7 +189,8 @@ class LedgerStateMachine(RuleBasedStateMachine):
         entry = self.ledger.get(fingerprint(payload))
         assert entry is not None
         if entry.simulation_id in ("sim-odd", "sim-init"):
-            assert entry.status == (reported if reported in VALID_LEDGER_STATUSES else "FAILED")
+            known = reported if reported in VALID_LEDGER_STATUSES else "FAILED"
+            assert entry.status == _SPELLINGS.get(reported, known)
 
     @rule(expr=st.sampled_from(_EXPRESSIONS))
     def forget_expression(self, expr: str) -> None:

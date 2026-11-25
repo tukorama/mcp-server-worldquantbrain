@@ -509,38 +509,52 @@ async def test_status_of_a_parent_lists_children(runtime: Any, settings: Any, br
     assert [c.simulation_id for c in result.children] == ["c0", "c1"]
 
 
-@pytest.mark.parametrize("status", ["FAIL", "CANCELED", "COMPLETED"])
-async def test_final_status_outside_the_ledger_alphabet_keeps_brains_answer(
-    runtime: Any, settings: Any, brain: Any, status: str
+@pytest.mark.parametrize(
+    ("status", "filed"),
+    [
+        ("FAIL", "FAILED"),
+        ("CANCELED", "CANCELLED"),
+        ("COMPLETED", "COMPLETE"),
+        ("NEVER_SEEN", "FAILED"),
+    ],
+)
+async def test_final_status_outside_the_ledger_alphabet_is_filed_by_meaning(
+    runtime: Any, settings: Any, brain: Any, status: str, filed: str
 ) -> None:
-    scripted(brain, (200, {"status": status, "message": "boom"}))
+    succeeded = filed == "COMPLETE"
+    body = {"status": status, "message": "boom"} | ({"alpha": "qMPjAxnO"} if succeeded else {})
+    scripted(brain, (200, body))
     payload = simulation_payload(settings, "close")
     result = await runtime.simulations.simulate(payload, wait=True, wait_seconds=60)
     assert (result.status, result.message) == (status, "boom")
+    assert (result.alpha is not None) == succeeded
     entry = runtime.ledger.get(fingerprint(payload))
     assert entry is not None
-    assert entry.status == "FAILED"
-    rerun = await runtime.simulations.simulate(payload, wait=True, wait_seconds=60, force=True)
-    assert rerun.status == status
+    assert entry.status == filed
+    again = await runtime.simulations.simulate(payload, wait=True, wait_seconds=60)
+    assert (again.from_ledger, again.alpha is not None) == (succeeded, succeeded)
+    assert len(brain.calls("POST", "/simulations")) == (1 if succeeded else 2)
     checked = await runtime.simulations.status("sim1", wait_seconds=0)
     assert (checked.status, checked.message) == (status, "boom")
 
 
+@pytest.mark.parametrize("success", ["COMPLETE", "COMPLETED"])
 async def test_batch_child_outside_the_ledger_alphabet_keeps_the_batch(
-    runtime: Any, settings: Any, brain: Any
+    runtime: Any, settings: Any, brain: Any, success: str
 ) -> None:
     payloads = [simulation_payload(settings, f"e{i}") for i in range(2)]
     brain.add("POST", "/simulations", (201, None, {"location": "https://x/simulations/parent"}))
     brain.add("GET", "/simulations/parent", {"status": "COMPLETE", "children": ["c0", "c1"]})
-    brain.add("GET", "/simulations/c0", {**payloads[0], "status": "COMPLETE", "alpha": "a0"})
+    brain.add("GET", "/simulations/c0", {**payloads[0], "status": success, "alpha": "a0"})
     brain.add("GET", "/simulations/c1", {**payloads[1], "status": "FAIL", "message": "x"})
     brain.add("GET", "/alphas/a0", {"id": "a0"})
     result = await runtime.simulations.simulate_batch(payloads, wait=True, wait_seconds=60)
-    assert result.batch_ids == ["parent"]
+    assert (result.status, result.batch_ids) == ("COMPLETE", ["parent"])
     assert [(r.simulation_id, r.status) for r in result.results] == [
-        ("c0", "COMPLETE"),
+        ("c0", success),
         ("c1", "FAIL"),
     ]
+    assert result.results[0].alpha is not None
     again = await runtime.simulations.simulate(payloads[0], wait=True, wait_seconds=60)
     assert (again.alpha_id, again.from_ledger) == ("a0", True)
     assert len(brain.calls("POST", "/simulations")) == 1

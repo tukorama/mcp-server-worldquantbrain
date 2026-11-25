@@ -8,8 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Fixed
 
 - A final simulation status outside the ledger's alphabet, such as BRAIN's `FAIL`, no longer ends
-  the call in an internal error. The result keeps BRAIN's status and message, the ledger files the
-  run as `FAILED` instead of leaving it `WAITING`, and a batch keeps its ids and results.
+  the call in an internal error. The result keeps BRAIN's status and message, and a batch keeps its
+  ids and results. Instead of leaving the run `WAITING`, the ledger files `FAIL`, `CANCELED` and
+  `COMPLETED` as `FAILED`, `CANCELLED` and `COMPLETE`, and any other final status as `FAILED`, so a
+  `COMPLETED` run is reused and its alpha fetched like a `COMPLETE` one.
 - `get_simulation_status` on a batch files each child's result under that expression's ledger row,
   also for a blocking batch whose wait ran out. Later lookups no longer fetch the whole batch again,
   and an expired batch id no longer gets its expressions simulated a second time.
@@ -23,9 +25,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - A rejected password is retried after one minute, then two, and after three rejections in a row
   the server stops logging in and asks for `mcp-server-worldquantbrain auth`, instead of retrying
   every minute and risking a locked account.
-- A redirect, an empty answer or a non-JSON page from a JSON endpoint is an error. `get_datafield`
-  and `get_dataset` no longer answer one with a bare id, and a redirect on `POST /simulations` is
-  no longer taken for a simulation id.
+- A redirect from a JSON endpoint is an error, and so is an empty or non-JSON answer to a read.
+  `get_datafield` and `get_dataset` no longer answer one with a bare id, and a redirect on
+  `POST /simulations` is no longer taken for a simulation id. A write such as `update_alpha` may
+  still answer with no body.
 - The per-expression locks no longer pile up for the life of the process.
 
 ## [0.2.2] - 2026-11-19

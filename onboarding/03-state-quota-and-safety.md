@@ -33,7 +33,7 @@ Inside `SimulationManager._start()` ([sim_manager.py](../src/mcp_server_worldqua
 
 Two hard invariants govern the ledger table:
 
-1. **Closed status alphabet:** `ledger_status()` maps every status `record()` and `update_by_id()` receive onto `VALID_LEDGER_STATUSES`. A final status outside it, such as BRAIN's `FAIL`, is filed as `FAILED`, so a write never raises and a row never stays `WAITING`. Callers still get BRAIN's own status and message.
+1. **Closed status alphabet:** `ledger_status()` maps every status `record()` and `update_by_id()` receive onto `VALID_LEDGER_STATUSES`. Other spellings of a known state map onto it (`FAIL` → `FAILED`, `CANCELED` → `CANCELLED`, `COMPLETED` → `COMPLETE`) and any other final status is filed as `FAILED`, so a write never raises and a row never stays `WAITING`. Callers still get BRAIN's own status and message.
 2. **Monotonic `alpha_id` preservation:** `ON CONFLICT` and `update_by_id()` (`COALESCE(?, alpha_id)` with `WHERE alpha_id IS NULL OR ? IS NOT NULL`) guarantee that a subsequent `WAITING` or `ERROR` rerun (`force=True`) never erases a previously recorded `alpha_id`. File mode is tightened to `0o600` on POSIX whenever the database is opened.
 
 Server processes that share the cache directory share the ledger. Before checking and starting a fingerprint, `SimulationManager` reserves it in the `reservations` table, in the same `BEGIN IMMEDIATE` transaction that reads its row, so a second process waits and joins the simulation instead of posting it again. A held reservation is renewed every 20 seconds and expires a minute after its process dies. When the ledger cannot be read or written, simulations are refused instead of run unchecked, unless `force=True`.

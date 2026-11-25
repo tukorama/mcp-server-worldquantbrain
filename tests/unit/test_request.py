@@ -155,7 +155,7 @@ async def test_second_401_after_relogin_is_an_auth_error(settings: Any, brain: A
 
 @pytest.mark.parametrize(
     ("status", "body"),
-    [(302, None), (200, b""), (200, b"<html>maintenance</html>"), (200, b"null")],
+    [(302, None), (200, b""), (200, b"<html>maintenance</html>"), (200, b"null"), (204, None)],
 )
 async def test_json_endpoint_refuses_a_redirect_or_a_body_that_is_not_json(
     settings: Any, brain: Any, status: Any, body: Any
@@ -167,7 +167,20 @@ async def test_json_endpoint_refuses_a_redirect_or_a_body_that_is_not_json(
     assert len(brain.calls("GET", "/x")) == 1
 
 
-async def test_no_content_is_an_empty_answer(settings: Any, brain: Any) -> None:
-    brain.add("PATCH", "/x", (204, None))
+@pytest.mark.parametrize("method", ["POST", "PATCH", "PUT", "DELETE"])
+@pytest.mark.parametrize(
+    ("status", "body"), [(200, b""), (200, b"<html>saved</html>"), (204, None)]
+)
+async def test_write_that_succeeded_may_answer_without_json(
+    settings: Any, brain: Any, method: str, status: Any, body: Any
+) -> None:
+    brain.add(method, "/x", (status, body))
     async with client_for(settings, brain) as client:
-        assert await client.request_json("PATCH", "/x") is None
+        assert await client.request_json(method, "/x") is None
+
+
+async def test_redirect_after_a_write_is_an_error(settings: Any, brain: Any) -> None:
+    brain.add("PATCH", "/x", (302, None, {"location": "https://elsewhere.example/x"}))
+    async with client_for(settings, brain) as client:
+        with pytest.raises(ServerError, match="302"):
+            await client.request_json("PATCH", "/x")
