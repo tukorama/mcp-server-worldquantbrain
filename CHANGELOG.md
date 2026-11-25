@@ -7,12 +7,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Fixed
 
+- A final simulation status outside the ledger's alphabet, such as BRAIN's `FAIL`, no longer ends
+  the call in an internal error. The result keeps BRAIN's status and message, the ledger files the
+  run as `FAILED` instead of leaving it `WAITING`, and a batch keeps its ids and results.
+- `get_simulation_status` on a batch files each child's result under that expression's ledger row,
+  also for a blocking batch whose wait ran out. Later lookups no longer fetch the whole batch again,
+  and an expired batch id no longer gets its expressions simulated a second time.
+- A status check that keeps failing with a 5xx or 429 says so in `message` instead of returning a
+  silent `PENDING`. A later check still moves the ledger row on.
+- Server processes sharing a ledger no longer start the same simulation twice: the ledger read and
+  a reservation share one SQLite transaction, and a reservation left by a dead process expires. A
+  ledger that cannot be read or written refuses the simulation instead of quietly skipping the
+  duplicate check, unless `force=True`.
+- `simulate_alphas_batch` with `force=True` no longer sends identical expressions twice.
 - A rejected password is retried after one minute, then two, and after three rejections in a row
   the server stops logging in and asks for `mcp-server-worldquantbrain auth`, instead of retrying
   every minute and risking a locked account.
 - A redirect, an empty answer or a non-JSON page from a JSON endpoint is an error. `get_datafield`
   and `get_dataset` no longer answer one with a bare id, and a redirect on `POST /simulations` is
   no longer taken for a simulation id.
+- The per-expression locks no longer pile up for the life of the process.
 
 ## [0.2.2] - 2026-11-19
 

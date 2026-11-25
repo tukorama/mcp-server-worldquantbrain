@@ -1,11 +1,13 @@
 import asyncio
+import contextlib
 import json
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import pytest
 
 from mcp_server_worldquantbrain.client.ledger import fingerprint
+from mcp_server_worldquantbrain.errors import BrainError, RateLimited, ServerError
 from mcp_server_worldquantbrain.models.simulation import simulation_payload
 from mcp_server_worldquantbrain.ops import Call, Runtime
 from tests.conftest import fixture
@@ -13,12 +15,38 @@ from tests.conftest import fixture
 pytestmark = pytest.mark.anyio
 
 LOCATION = {"location": "https://api.worldquantbrain.com/simulations/sim1"}
+SESSION = {"user": {"id": "A"}, "token": {"expiry": 9000}}
 
 
 def scripted(brain: Any, *polls: Any) -> Any:
     brain.add("POST", "/simulations", (201, None, LOCATION))
     brain.add("GET", "/simulations/sim1", *polls)
     brain.add("GET", "/alphas/qMPjAxnO", fixture("alpha_detail"))
+
+
+class HeldPosts:
+    """BRAIN that holds every POST /simulations until `release` is set."""
+
+    def __init__(self) -> None:
+        self.posts: list[httpx2.Request] = []
+        self.first_post = asyncio.Event()
+        self.second_post = asyncio.Event()
+        self.release = asyncio.Event()
+        self.transport = httpx2.MockTransport(self._handle)
+
+    async def _handle(self, request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/authentication":
+            return httpx2.Response(201 if request.method == "POST" else 200, json=SESSION)
+        if request.method == "POST":
+            self.posts.append(request)
+            number = len(self.posts)
+            if number == 1:
+                self.first_post.set()
+            else:
+                self.second_post.set()
+            await self.release.wait()
+            return httpx2.Response(201, headers={"location": f"https://x/simulations/sim{number}"})
+        return httpx2.Response(200, json={"status": "SIMULATING"}, headers={"retry-after": "1"})
 
 
 @pytest.fixture
@@ -222,11 +250,14 @@ async def test_identical_concurrent_calls_post_once(
     assert all(r.alpha is not None for r in results)
 
 
-async def test_duplicates_inside_a_batch_post_once(runtime: Any, settings: Any, brain: Any) -> None:
+@pytest.mark.parametrize("force", [False, True])
+async def test_duplicates_inside_a_batch_post_once(
+    runtime: Any, settings: Any, brain: Any, force: bool
+) -> None:
     await batch_routes(brain, 1)
     brain.add("GET", "/simulations/parent", {"status": "ERROR", "message": "x"})
     same = [simulation_payload(settings, "close"), simulation_payload(settings, " close ")]
-    await runtime.simulations.simulate_batch(same, wait=True, wait_seconds=60)
+    await runtime.simulations.simulate_batch(same, wait=True, wait_seconds=60, force=force)
     assert isinstance(json.loads(brain.calls("POST", "/simulations")[0].content), dict)
 
 
@@ -476,3 +507,200 @@ async def test_status_of_a_parent_lists_children(runtime: Any, settings: Any, br
     await batch_routes(brain, 2)
     result = await runtime.simulations.status("parent", wait_seconds=0)
     assert [c.simulation_id for c in result.children] == ["c0", "c1"]
+
+
+@pytest.mark.parametrize("status", ["FAIL", "CANCELED", "COMPLETED"])
+async def test_final_status_outside_the_ledger_alphabet_keeps_brains_answer(
+    runtime: Any, settings: Any, brain: Any, status: str
+) -> None:
+    scripted(brain, (200, {"status": status, "message": "boom"}))
+    payload = simulation_payload(settings, "close")
+    result = await runtime.simulations.simulate(payload, wait=True, wait_seconds=60)
+    assert (result.status, result.message) == (status, "boom")
+    entry = runtime.ledger.get(fingerprint(payload))
+    assert entry is not None
+    assert entry.status == "FAILED"
+    rerun = await runtime.simulations.simulate(payload, wait=True, wait_seconds=60, force=True)
+    assert rerun.status == status
+    checked = await runtime.simulations.status("sim1", wait_seconds=0)
+    assert (checked.status, checked.message) == (status, "boom")
+
+
+async def test_batch_child_outside_the_ledger_alphabet_keeps_the_batch(
+    runtime: Any, settings: Any, brain: Any
+) -> None:
+    payloads = [simulation_payload(settings, f"e{i}") for i in range(2)]
+    brain.add("POST", "/simulations", (201, None, {"location": "https://x/simulations/parent"}))
+    brain.add("GET", "/simulations/parent", {"status": "COMPLETE", "children": ["c0", "c1"]})
+    brain.add("GET", "/simulations/c0", {**payloads[0], "status": "COMPLETE", "alpha": "a0"})
+    brain.add("GET", "/simulations/c1", {**payloads[1], "status": "FAIL", "message": "x"})
+    brain.add("GET", "/alphas/a0", {"id": "a0"})
+    result = await runtime.simulations.simulate_batch(payloads, wait=True, wait_seconds=60)
+    assert result.batch_ids == ["parent"]
+    assert [(r.simulation_id, r.status) for r in result.results] == [
+        ("c0", "COMPLETE"),
+        ("c1", "FAIL"),
+    ]
+    again = await runtime.simulations.simulate(payloads[0], wait=True, wait_seconds=60)
+    assert (again.alpha_id, again.from_ledger) == ("a0", True)
+    assert len(brain.calls("POST", "/simulations")) == 1
+
+
+@pytest.mark.parametrize("wait", [False, True])
+async def test_resumed_batch_files_each_child_under_its_own_row(
+    runtime: Any, settings: Any, brain: Any, wait: bool
+) -> None:
+    payloads = [simulation_payload(settings, f"e{i}") for i in range(2)]
+    brain.add("POST", "/simulations", (201, None, {"location": "https://x/simulations/parent"}))
+    brain.add("GET", "/simulations/parent", (200, {"status": "SIMULATING"}, {"retry-after": "5"}))
+    started = await runtime.simulations.simulate_batch(payloads, wait=wait, wait_seconds=1)
+    assert started.status == "PENDING"
+    brain.add("GET", "/simulations/parent", {"status": "COMPLETE", "children": ["c0", "c1"]})
+    for index, payload in enumerate(payloads):
+        child = {**payload, "status": "COMPLETE", "alpha": f"a{index}"}
+        brain.add("GET", f"/simulations/c{index}", child)
+        brain.add("GET", f"/alphas/a{index}", {"id": f"a{index}"})
+    await runtime.simulations.status("parent", wait_seconds=30)
+    for index, payload in enumerate(payloads):
+        entry = runtime.ledger.get(fingerprint(payload))
+        assert entry is not None
+        assert (entry.simulation_id, entry.status, entry.alpha_id) == (
+            f"c{index}",
+            "COMPLETE",
+            f"a{index}",
+        )
+    brain.add("GET", "/simulations/parent", (404, {"detail": "Not found."}))
+    again = await runtime.simulations.simulate(payloads[0], wait=True, wait_seconds=60)
+    assert (again.simulation_id, again.alpha_id, again.from_ledger) == ("c0", "a0", True)
+    assert len(brain.calls("POST", "/simulations")) == 1
+
+
+@pytest.mark.parametrize(
+    ("failure", "reported"),
+    [((500, {"detail": "Internal"}), "returned 500"), ((429, None), "throttling")],
+)
+async def test_lasting_failure_of_status_checks_is_reported(
+    runtime: Any, settings: Any, brain: Any, failure: Any, reported: str
+) -> None:
+    scripted(brain, failure)
+    payload = simulation_payload(settings, "close")
+    first = await runtime.simulations.simulate(payload, wait=True, wait_seconds=120)
+    assert first.status == "PENDING"
+    assert first.message is not None
+    assert reported in first.message
+    again = await runtime.simulations.simulate(payload, wait=False, wait_seconds=120)
+    assert again.from_ledger
+    assert again.message is not None
+    assert reported in again.message
+    brain.add("GET", "/simulations/sim1", (200, fixture("simulation_complete")))
+    done = await runtime.simulations.status("sim1", wait_seconds=0)
+    assert done.status == "COMPLETE"
+    entry = runtime.ledger.get(fingerprint(payload))
+    assert entry is not None
+    assert entry.status == "COMPLETE"
+    assert len(brain.calls("POST", "/simulations")) == 1
+
+
+async def test_batch_reports_why_its_status_check_failed(
+    runtime: Any, settings: Any, brain: Any
+) -> None:
+    brain.add("POST", "/simulations", (201, None, {"location": "https://x/simulations/parent"}))
+    brain.add("GET", "/simulations/parent", (500, None))
+    payloads = [simulation_payload(settings, f"e{i}") for i in range(2)]
+    result = await runtime.simulations.simulate_batch(payloads, wait=True, wait_seconds=30)
+    assert result.status == "PENDING"
+    assert result.results[0].message is not None
+    assert "returned 500" in result.results[0].message
+
+
+@pytest.mark.parametrize("batch", [False, True])
+async def test_identical_calls_from_two_processes_post_once(settings: Any, batch: bool) -> None:
+    held = HeldPosts()
+    first = Runtime.create(settings, transport=held.transport)
+    second = Runtime.create(settings, transport=held.transport)
+    payload = simulation_payload(settings, "close")
+
+    async def start(instance: Runtime) -> str:
+        if batch:
+            result = await instance.simulations.simulate_batch(
+                [payload], wait=False, wait_seconds=60
+            )
+            return [*result.batch_ids, *(r.simulation_id for r in result.results)][0]
+        single = await instance.simulations.simulate(payload, wait=False, wait_seconds=60)
+        return single.simulation_id
+
+    one = asyncio.create_task(start(first))
+    await held.first_post.wait()
+    other = asyncio.create_task(start(second))
+    # Without a shared guard the second process posts too; give it the time to.
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(held.second_post.wait(), timeout=0.3)
+    held.release.set()
+    assert await asyncio.gather(one, other) == ["sim1", "sim1"]
+    assert len(held.posts) == 1
+    await first.aclose()
+    await second.aclose()
+
+
+async def test_unusable_ledger_refuses_to_post(runtime: Any, settings: Any, brain: Any) -> None:
+    runtime.ledger.path.parent.mkdir(parents=True, exist_ok=True)
+    runtime.ledger.path.write_text("not a database " * 100)
+    scripted(brain, (200, fixture("simulation_complete")))
+    payload = simulation_payload(settings, "close")
+    with pytest.raises(BrainError, match="ledger"):
+        await runtime.simulations.simulate(payload, wait=True, wait_seconds=60)
+    batch = await runtime.simulations.simulate_batch([payload], wait=True, wait_seconds=60)
+    assert (batch.status, batch.not_started) == ("PARTIAL", ["close"])
+    assert batch.message is not None
+    assert "ledger" in batch.message
+    assert brain.calls("POST", "/simulations") == []
+
+
+async def test_reservation_of_another_live_process_is_waited_for(
+    runtime: Any, settings: Any, brain: Any
+) -> None:
+    payload = simulation_payload(settings, "close")
+    assert runtime.ledger.claim([fingerprint(payload)], "other-process", 60) == {}
+    scripted(brain, (200, fixture("simulation_complete")))
+    with pytest.raises(RateLimited, match="Another server process"):
+        await runtime.simulations.simulate(payload, wait=False, wait_seconds=0.3)
+    assert brain.calls("POST", "/simulations") == []
+
+
+async def test_reservation_left_by_a_dead_process_expires(
+    runtime: Any, settings: Any, brain: Any
+) -> None:
+    payload = simulation_payload(settings, "close")
+    assert runtime.ledger.claim([fingerprint(payload)], "dead-process", -1) == {}
+    scripted(brain, (200, fixture("simulation_complete")))
+    result = await runtime.simulations.simulate(payload, wait=True, wait_seconds=60)
+    assert result.status == "COMPLETE"
+    assert len(brain.calls("POST", "/simulations")) == 1
+
+
+async def test_redirect_from_post_simulations_is_not_a_simulation_id(
+    runtime: Any, settings: Any, brain: Any
+) -> None:
+    moved = {"location": "https://api.worldquantbrain.com/maintenance"}
+    brain.add("POST", "/simulations", (302, None, moved))
+    payload = simulation_payload(settings, "close")
+    with pytest.raises(ServerError, match="302"):
+        await runtime.simulations.simulate(payload, wait=False, wait_seconds=60)
+    assert runtime.ledger.get(fingerprint(payload)) is None
+
+
+async def test_fingerprint_locks_are_dropped_once_unused(settings: Any) -> None:
+    held = HeldPosts()
+    instance = Runtime.create(settings, transport=held.transport)
+    manager = cast("Any", instance.simulations)
+    payload = simulation_payload(settings, "close")
+    first = asyncio.create_task(manager.simulate(payload, wait=False, wait_seconds=60))
+    await held.first_post.wait()
+    with pytest.raises(RateLimited):
+        await manager.simulate(payload, wait=False, wait_seconds=0.01)
+    held.release.set()
+    await first
+    others = [simulation_payload(settings, f"e{i}") for i in range(3)]
+    await manager.simulate_batch(others, wait=False, wait_seconds=60)
+    assert manager._locks == {}
+    await instance.aclose()

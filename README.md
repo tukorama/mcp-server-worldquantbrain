@@ -333,7 +333,10 @@ counted, and can hit BRAIN's own limit, which comes back as a rate-limit error w
 wait.
 
 **The ledger.** Whitespace in an expression does not matter; every setting does. Pass `force=True`
-to run an identical simulation again. Failed simulations can be run again.
+to run an identical simulation again. Failed simulations can be run again. Server processes that
+share the cache directory share the ledger, so they do not start the same simulation twice either.
+If the ledger file cannot be used, simulations are refused rather than run unchecked; `force=True`
+or `WQB_LEDGER=false` runs them anyway.
 
 **Writes are not retried.** A POST that may have reached BRAIN is never repeated automatically, so a
 network failure cannot spend quota twice or submit twice. Reads retry with backoff and honour

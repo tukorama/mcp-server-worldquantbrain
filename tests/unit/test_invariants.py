@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
@@ -173,17 +172,23 @@ class LedgerStateMachine(RuleBasedStateMachine):
         if entry is not None and alpha_id is not None and entry.simulation_id == sim_id:
             self.expected_alpha[key] = alpha_id
 
-    @rule(bad_status=st.sampled_from(["BOGUS", "INVALID", "DONE", ""]))
-    def reject_invalid_status(self, bad_status: str) -> None:
+    @rule(
+        reported=st.one_of(
+            st.sampled_from(["FAIL", "CANCELED", "COMPLETED", "BOGUS", ""]), st.text(max_size=12)
+        )
+    )
+    def file_a_status_outside_the_alphabet_as_final(self, reported: str) -> None:
         payload: dict[str, Any] = {
             "type": "REGULAR",
             "settings": {"region": "USA", "delay": 1},
             "regular": _EXPRESSIONS[0],
         }
-        with pytest.raises(ValueError, match="Unsupported ledger status"):
-            self.ledger.record(payload, "sim-bad", bad_status)
-        with pytest.raises(ValueError, match="Unsupported ledger status"):
-            self.ledger.update_by_id("sim-init", bad_status, None)
+        self.ledger.record(payload, "sim-odd", reported)
+        self.ledger.update_by_id("sim-init", reported, None)
+        entry = self.ledger.get(fingerprint(payload))
+        assert entry is not None
+        if entry.simulation_id in ("sim-odd", "sim-init"):
+            assert entry.status == (reported if reported in VALID_LEDGER_STATUSES else "FAILED")
 
     @rule(expr=st.sampled_from(_EXPRESSIONS))
     def forget_expression(self, expr: str) -> None:

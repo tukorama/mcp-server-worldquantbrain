@@ -89,3 +89,7 @@ class PollTimeout(BrainError):
 
 class ServerError(BrainError):
     pass
+
+
+class LedgerUnavailable(BrainError):
+    pass

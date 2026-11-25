@@ -4,13 +4,16 @@ import logging
 import os
 import re
 import sqlite3
-from collections.abc import Generator
+import time
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from mcp_server_worldquantbrain.client.session import utcnow
+from mcp_server_worldquantbrain.errors import LedgerUnavailable
+from mcp_server_worldquantbrain.models.base import as_dict
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +49,15 @@ VALID_LEDGER_STATUSES: frozenset[str] = frozenset(
 )
 
 
-def validate_ledger_status(status: str) -> LedgerStatus:
-    """Validate that a ledger status belongs to the closed simulation state alphabet."""
-    if status not in VALID_LEDGER_STATUSES:
-        raise ValueError(f"Unsupported ledger status {status!r}.")
-    return cast("LedgerStatus", status)
+def ledger_status(status: str) -> LedgerStatus:
+    """Map a status BRAIN reported onto the closed simulation state alphabet.
+
+    BRAIN also reports final states outside it, such as FAIL. Polling only stops on a final state,
+    so any other value is filed as a failure: final, and free to run again.
+    """
+    if status in VALID_LEDGER_STATUSES:
+        return cast("LedgerStatus", status)
+    return "FAILED"
 
 
 _SCHEMA = """
@@ -62,6 +69,15 @@ CREATE TABLE IF NOT EXISTS simulations (
     expression TEXT NOT NULL,
     settings TEXT NOT NULL,
     updated_at TEXT NOT NULL
+)
+"""
+# A row here says a process is checking and starting this fingerprint, so other processes sharing
+# the file wait for it instead of starting it again.
+_RESERVATIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS reservations (
+    fingerprint TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    expires_at REAL NOT NULL
 )
 """
 
@@ -104,31 +120,131 @@ class Ledger:
             self.path.chmod(0o600)
         try:
             connection.execute(_SCHEMA)
+            connection.execute(_RESERVATIONS_SCHEMA)
             with connection:
                 yield connection
         finally:
             connection.close()
+
+    @staticmethod
+    def _entry(connection: sqlite3.Connection, key: str) -> LedgerEntry | None:
+        row = connection.execute(
+            "SELECT simulation_id, status, alpha_id FROM simulations WHERE fingerprint = ?",
+            (key,),
+        ).fetchone()
+        return LedgerEntry(*row) if row else None
 
     def get(self, key: str) -> LedgerEntry | None:
         if not self.enabled:
             return None
         try:
             with self._connection() as connection:
-                row = connection.execute(
-                    "SELECT simulation_id, status, alpha_id FROM simulations WHERE fingerprint = ?",
-                    (key,),
-                ).fetchone()
+                return self._entry(connection, key)
         except (sqlite3.Error, OSError) as exc:
             logger.warning("Ledger read failed: %s", exc)
             return None
-        return LedgerEntry(*row) if row else None
 
-    def record(
-        self, payload: dict[str, Any], simulation_id: str, status: str, alpha_id: str | None = None
-    ) -> None:
+    def claim(
+        self, keys: Sequence[str], owner: str, seconds: float
+    ) -> dict[str, LedgerEntry] | None:
+        """Reserve `keys` for `owner` and read their rows, in one transaction.
+
+        Returns None while another owner holds an unexpired reservation on any of them. Raises
+        LedgerUnavailable when the file cannot be used, since going ahead without the check could
+        spend quota on a simulation that already ran.
+        """
+        if not self.enabled:
+            return {}
+        now = time.time()
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                for key in keys:
+                    held = connection.execute(
+                        """
+                        SELECT 1 FROM reservations
+                        WHERE fingerprint = ? AND owner != ? AND expires_at > ?
+                        """,
+                        (key, owner, now),
+                    ).fetchone()
+                    if held:
+                        return None
+                connection.executemany(
+                    """
+                    INSERT INTO reservations VALUES (?, ?, ?)
+                    ON CONFLICT(fingerprint) DO UPDATE SET
+                        owner = excluded.owner,
+                        expires_at = excluded.expires_at
+                    """,
+                    [(key, owner, now + seconds) for key in keys],
+                )
+                entries = {key: self._entry(connection, key) for key in keys}
+        except (sqlite3.Error, OSError) as exc:
+            raise LedgerUnavailable(
+                f"The simulation ledger {self.path} cannot be used: {exc}.",
+                hint=(
+                    "Nothing was submitted, since without the ledger a repeat could spend quota "
+                    + "twice. Fix or move the file, set WQB_LEDGER=false to run without duplicate "
+                    + "detection, or pass force=True."
+                ),
+            ) from exc
+        return {key: entry for key, entry in entries.items() if entry is not None}
+
+    def renew(self, keys: Sequence[str], owner: str, seconds: float) -> None:
+        self._write_many(
+            "UPDATE reservations SET expires_at = ? WHERE fingerprint = ? AND owner = ?",
+            [(time.time() + seconds, key, owner) for key in keys],
+        )
+
+    def release(self, keys: Sequence[str], owner: str) -> None:
+        self._write_many(
+            "DELETE FROM reservations WHERE fingerprint = ? AND owner = ?",
+            [(key, owner) for key in keys],
+        )
+
+    def _write_many(self, statement: str, rows: list[tuple[Any, ...]]) -> None:
         if not self.enabled:
             return
-        validated_status = validate_ledger_status(status)
+        try:
+            with self._connection() as connection:
+                connection.executemany(statement, rows)
+        except (sqlite3.Error, OSError) as exc:
+            logger.warning("Ledger reservation update failed: %s", exc)
+
+    def members(self, simulation_id: str) -> dict[str, dict[str, Any]]:
+        """Return the payloads filed under `simulation_id` by fingerprint: a batch's members."""
+        if not self.enabled:
+            return {}
+        try:
+            with self._connection() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT fingerprint, expression, settings FROM simulations
+                    WHERE simulation_id = ?
+                    """,
+                    (simulation_id,),
+                ).fetchall()
+            return {
+                key: {"regular": expression, "settings": as_dict(json.loads(settings))}
+                for key, expression, settings in rows
+            }
+        except (sqlite3.Error, OSError, ValueError) as exc:
+            logger.warning("Ledger read failed: %s", exc)
+            return {}
+
+    def record(
+        self,
+        payload: dict[str, Any],
+        simulation_id: str,
+        status: str,
+        alpha_id: str | None = None,
+        *,
+        key: str | None = None,
+    ) -> None:
+        """File a simulation under `key`, the payload's fingerprint unless given."""
+        if not self.enabled:
+            return
+        normalized_status = ledger_status(status)
         try:
             with self._connection() as connection:
                 connection.execute(
@@ -144,9 +260,9 @@ class Ledger:
                     WHERE excluded.alpha_id IS NOT NULL OR simulations.alpha_id IS NULL
                     """,
                     (
-                        fingerprint(payload),
+                        key or fingerprint(payload),
                         simulation_id,
-                        validated_status,
+                        normalized_status,
                         alpha_id,
                         str(payload.get("regular", "")),
                         json.dumps(payload.get("settings"), sort_keys=True),
@@ -159,7 +275,7 @@ class Ledger:
     def update_by_id(self, simulation_id: str, status: str, alpha_id: str | None) -> None:
         if not self.enabled:
             return
-        validated_status = validate_ledger_status(status)
+        normalized_status = ledger_status(status)
         try:
             with self._connection() as connection:
                 connection.execute(
@@ -168,16 +284,23 @@ class Ledger:
                     SET status = ?, alpha_id = COALESCE(?, alpha_id), updated_at = ?
                     WHERE simulation_id = ? AND (alpha_id IS NULL OR ? IS NOT NULL)
                     """,
-                    (validated_status, alpha_id, utcnow().isoformat(), simulation_id, alpha_id),
+                    (normalized_status, alpha_id, utcnow().isoformat(), simulation_id, alpha_id),
                 )
         except (sqlite3.Error, OSError) as exc:
             logger.warning("Ledger update failed: %s", exc)
 
-    def forget(self, key: str) -> None:
+    def forget(self, key: str, simulation_id: str | None = None) -> None:
+        """Drop the row for `key`; given `simulation_id`, only while the row still points at it."""
         if not self.enabled:
             return
         try:
             with self._connection() as connection:
-                connection.execute("DELETE FROM simulations WHERE fingerprint = ?", (key,))
+                connection.execute(
+                    """
+                    DELETE FROM simulations
+                    WHERE fingerprint = ? AND (? IS NULL OR simulation_id = ?)
+                    """,
+                    (key, simulation_id, simulation_id),
+                )
         except (sqlite3.Error, OSError) as exc:
             logger.warning("Ledger delete failed: %s", exc)
