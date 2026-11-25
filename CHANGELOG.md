@@ -5,6 +5,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed
+
+- Dependencies refreshed: httpx2 2.16.2, pydantic 2.14.4, langchain 1.5.2, langchain-core 1.8.4,
+  langgraph 1.2.24, ruff 0.17.6, hypothesis 6.170.17 and the rest of the lock.
+
 ## [0.2.3] - 2026-11-25
 
 ### Fixed
